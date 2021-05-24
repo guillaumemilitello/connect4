@@ -9,6 +9,7 @@
 #include <random>
 #include <iostream>
 #include <fstream>
+#include <chrono>
 
 struct Computer
 {
@@ -138,11 +139,21 @@ Computer::Log& Computer::Log::operator<<(const T& t)
 
 unsigned Computer::Log::_moveNumber = 0;
 
-
 unsigned Computer::getCol(const State& state, const unsigned recursionLevel)
 {
     Log log("computeur");
-    return getScores(state, state.getTurn(), recursionLevel, log).getBestCol();
+    std::cout << "COMPUTER... ";
+
+    using namespace std::chrono;
+    const auto t_begin {high_resolution_clock::now()};
+
+    const auto col {getScores(state, state.getTurn(), recursionLevel, log).getBestCol()};
+
+    const auto t_end {high_resolution_clock::now()};
+    duration<double, std::milli> t_duration {t_end - t_begin};
+    std::cout << t_duration.count() << "ms\n";
+
+    return col;
 }
 
 Computer::Scores Computer::getScores(const State& state, const char player, const unsigned recursionLevel, Log& log)
