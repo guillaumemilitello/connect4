@@ -6,7 +6,7 @@
 
 int main()
 {
-    char pTurn;
+    char pTurn {' '};
     while (pTurn != P1 && pTurn != P2)
     {
         std::cout << "ENTER FIRST PLAYER [1|2]: ";
