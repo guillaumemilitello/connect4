@@ -13,6 +13,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <future>
 
 struct Computer
 {
@@ -25,6 +26,7 @@ private:
         static constexpr value_type FORCED_MOVE      {-10000};
         static constexpr value_type DOUBLE_TRAP_MOVE { 1000};
         static constexpr value_type TRAP_MOVE        { 100};
+        static constexpr value_type INVALID_MOVE     {std::numeric_limits<value_type>::lowest()};
 
         Scores();
         Scores(value_type i);
@@ -52,7 +54,7 @@ private:
 
     static Scores getScores(const State& state, const char player, const unsigned recursionLevel, Log& log, const bool multiThreading=false);
 
-    static void getScoreColRec(const State& state, const unsigned col, const char player, const unsigned recursionLevel, Log& log, Scores& scores);
+    static int getScoreColRec(const State& state, const unsigned col, const char player, const unsigned recursionLevel, Log& log);
     static Scores::value_type getScoreCol(const State& state, unsigned const col, Log& log);
 
     static Board getEvaluationBoard(const Board& board, const char player, Log& log);
@@ -66,7 +68,7 @@ Computer::Scores::Scores()
 {
     for(size_t col = 0; col < WIDTH; ++col)
     {
-        (*this)[col] = std::numeric_limits<value_type>::lowest();
+        (*this)[col] = INVALID_MOVE;
     }
 }
 
@@ -80,7 +82,7 @@ Computer::Scores::Scores(value_type i)
 
 int Computer::Scores::max() const
 {
-    value_type max {std::numeric_limits<value_type>::lowest()};
+    value_type max {INVALID_MOVE};
     for(size_t col = 0; col < WIDTH; ++col)
     {
         max = std::max(max, (*this)[col]);
@@ -162,51 +164,27 @@ Computer::Scores Computer::getScores(const State& state, const char player, cons
 {
     if (recursionLevel == 0)
     {
-        Scores s(0.0);
+        Scores s(0);
         log << "RECURSION LEVEL=" << recursionLevel << " SCORES=" << s << "\n";
         return s;
     }
 
     log << "GET SCORES ==========================================\n";
 
-    Scores scores;
-    std::array<std::thread, WIDTH> threadArray;
-    std::array<std::chrono::system_clock::time_point, WIDTH> timeBeginArray; // for chrono, only if(multiThreading)
-    std::atomic<int> threadNumber = 0;
 
     log << "PLAYER PLAYING ========================\n";
+
+    std::array<std::future<Scores::value_type>, WIDTH> scoreFutures;
     for (unsigned col=0; col < WIDTH; ++col)
     {
-        if (multiThreading)
-        {
-            static const int threadNumberMax {static_cast<int>(std::thread::hardware_concurrency()) - 1};
-            while (threadNumber >= threadNumberMax)
-            {
-                using namespace std::chrono_literals;
-                std::this_thread::sleep_for(50ms);
-            }
-
-            timeBeginArray[col] = std::chrono::high_resolution_clock::now();
-            auto currentThread {std::thread(getScoreColRec, std::cref(state), col, player, recursionLevel, std::ref(log), std::ref(scores))};
-            threadArray[col] = std::move(currentThread);
-            ++threadNumber;
-        }
-        else
-        {
-            getScoreColRec(state, col, player, recursionLevel, log, scores);
-        }
+        const auto launch {multiThreading ? std::launch::async : std::launch::deferred};
+        scoreFutures[col] = std::async(launch, getScoreColRec, std::cref(state), col, player, recursionLevel, std::ref(log));
     }
 
-    if (multiThreading)
+    Scores scores;
+    for (unsigned col=0; col < WIDTH; ++col)
     {
-        for (unsigned col=0; col < WIDTH; ++col)
-        {
-            if (threadArray[col].joinable())
-            {
-                threadArray[col].join();
-                --threadNumber;
-            }
-        }
+        scores[col] = scoreFutures[col].get();
     }
 
     log << "RECURSION LEVEL=" << recursionLevel << " SCORES=" << scores << "\n";
@@ -214,26 +192,23 @@ Computer::Scores Computer::getScores(const State& state, const char player, cons
     return scores;
 }
 
-
-void Computer::getScoreColRec(const State& state, const unsigned col, const char player, const unsigned recursionLevel, Log& log, Scores& scores)
+int Computer::getScoreColRec(const State& state, const unsigned col, const char player, const unsigned recursionLevel, Log& log)
 {
     if (!state.isColValid(col))
     {
-        return;
+        return Scores::INVALID_MOVE;
     }
 
     State nextState {state};
     nextState.addPosition(col);
 
     const auto scoreCol {getScoreCol(nextState, col, log)};
-    scores[col] = scoreCol;
-
     if (scoreCol == Scores::WIN_MOVE ||
         scoreCol == Scores::DOUBLE_TRAP_MOVE ||
         scoreCol == Scores::FORCED_MOVE)
     {
-        log << "RECURSION LEVEL=" << recursionLevel << " COL=" << col << " SCORE=" << scores[col] << "\n";
-        return;
+        log << "RECURSION LEVEL=" << recursionLevel << " COL=" << col << " SCORE=" << scoreCol << "\n";
+        return scoreCol;
     }
 
     Scores recScores {getScores(nextState, player, recursionLevel - 1, log)};
@@ -247,7 +222,7 @@ void Computer::getScoreColRec(const State& state, const unsigned col, const char
 
     const Scores::value_type bestRecScoreWithFactor {static_cast<Scores::value_type>(static_cast<double>(bestRecScore) / 1.5)}; // recursion factor
     log << "RECURSION LEVEL=" << recursionLevel << " COL=" << col << " SCORE=" << bestRecScoreWithFactor << "\n";
-    scores[col] = bestRecScoreWithFactor;
+    return bestRecScoreWithFactor;
 }
 
 Computer::Scores::value_type Computer::getScoreCol(const State& state, unsigned const col, Log& log)
