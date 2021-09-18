@@ -4,6 +4,8 @@
 #include "board.h"
 #include "player.h"
 
+#include "threadmanager.h"
+
 #include <limits>
 #include <algorithm>
 #include <random>
@@ -54,7 +56,8 @@ private:
 
     static Scores getScores(const State& state, const char player, const unsigned recursionLevel, Log& log, const bool multiThreading=false);
 
-    static int getScoreColRec(const State& state, const unsigned col, const char player, const unsigned recursionLevel, Log& log);
+    static void getScoreColRec(const State& state, const unsigned col, const char player, const unsigned recursionLevel, Log& log,
+                               std::promise<Scores::value_type>&& scorePromise);
     static Scores::value_type getScoreCol(const State& state, unsigned const col, Log& log);
 
     static Board getEvaluationBoard(const Board& board, const char player, Log& log);
@@ -174,16 +177,22 @@ Computer::Scores Computer::getScores(const State& state, const char player, cons
 
     log << "PLAYER PLAYING ========================\n";
 
+    std::array<std::promise<Scores::value_type>, WIDTH> scorePromises;
     std::array<std::future<Scores::value_type>, WIDTH> scoreFutures;
     for (unsigned col=0; col < WIDTH; ++col)
     {
-        const auto launch {multiThreading ? std::launch::async : std::launch::deferred};
-        scoreFutures[col] = std::async(launch, getScoreColRec, std::cref(state), col, player, recursionLevel, std::ref(log));
+        scoreFutures[col] = scorePromises[col].get_future();
+    }
+
+    for (unsigned col=0; col < WIDTH; ++col)
+    {
+        ThreadManager::try_async(getScoreColRec, std::cref(state), col, player, recursionLevel, std::ref(log), std::move(scorePromises[col]));
     }
 
     Scores scores;
     for (unsigned col=0; col < WIDTH; ++col)
     {
+        scoreFutures[col].wait();
         scores[col] = scoreFutures[col].get();
     }
 
@@ -192,11 +201,13 @@ Computer::Scores Computer::getScores(const State& state, const char player, cons
     return scores;
 }
 
-int Computer::getScoreColRec(const State& state, const unsigned col, const char player, const unsigned recursionLevel, Log& log)
+void Computer::getScoreColRec(const State& state, const unsigned col, const char player, const unsigned recursionLevel, Log& log,
+                              std::promise<Scores::value_type>&& scorePromise)
 {
     if (!state.isColValid(col))
     {
-        return Scores::INVALID_MOVE;
+        scorePromise.set_value(Scores::INVALID_MOVE);
+        return;
     }
 
     State nextState {state};
@@ -208,7 +219,8 @@ int Computer::getScoreColRec(const State& state, const unsigned col, const char 
         scoreCol == Scores::FORCED_MOVE)
     {
         log << "RECURSION LEVEL=" << recursionLevel << " COL=" << col << " SCORE=" << scoreCol << "\n";
-        return scoreCol;
+        scorePromise.set_value(scoreCol);
+        return;
     }
 
     Scores recScores {getScores(nextState, player, recursionLevel - 1, log)};
@@ -222,7 +234,7 @@ int Computer::getScoreColRec(const State& state, const unsigned col, const char 
 
     const Scores::value_type bestRecScoreWithFactor {static_cast<Scores::value_type>(static_cast<double>(bestRecScore) / 1.5)}; // recursion factor
     log << "RECURSION LEVEL=" << recursionLevel << " COL=" << col << " SCORE=" << bestRecScoreWithFactor << "\n";
-    return bestRecScoreWithFactor;
+    scorePromise.set_value(bestRecScoreWithFactor);
 }
 
 Computer::Scores::value_type Computer::getScoreCol(const State& state, unsigned const col, Log& log)
