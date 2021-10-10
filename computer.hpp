@@ -150,7 +150,7 @@ unsigned Computer::Log::_moveNumber = 0;
 
 unsigned Computer::getCol(const State& state, const unsigned recursionLevel)
 {
-    Log log("computeur");
+    Log log("log_computer");
     std::cout << "COMPUTER... ";
 
     const auto timeBegin {std::chrono::high_resolution_clock::now()};
@@ -177,6 +177,7 @@ Computer::Scores Computer::getScores(const State& state, const char player, cons
 
     log << "PLAYER PLAYING ========================\n";
 
+    constexpr std::array<unsigned, WIDTH> colNum {0, 1, 2, 3, 4, 5, 6};
     std::array<std::promise<Scores::value_type>, WIDTH> scorePromises;
     std::array<std::future<Scores::value_type>, WIDTH> scoreFutures;
     for (unsigned col=0; col < WIDTH; ++col)
@@ -186,7 +187,7 @@ Computer::Scores Computer::getScores(const State& state, const char player, cons
 
     for (unsigned col=0; col < WIDTH; ++col)
     {
-        ThreadManager::try_async(getScoreColRec, std::cref(state), col, player, recursionLevel, std::ref(log), std::move(scorePromises[col]));
+        ThreadManager::try_async(getScoreColRec, std::cref(state), colNum[col], player, recursionLevel, std::ref(log), std::move(scorePromises[col]));
     }
 
     Scores scores;
